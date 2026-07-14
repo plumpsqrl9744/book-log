@@ -14,7 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch RSS and create post files
+      - name: Install html2text
+        run: pip install html2text
+
+      - name: Fetch RSS and sync post files
         run: |
           RSS=$(curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://dev-jayden.tistory.com/rss")
 
@@ -26,11 +29,20 @@ jobs:
           mkdir -p log
 
           echo "$RSS" | python3 -c "
-          import sys, os, re, html
+          import sys, os, re
           import xml.etree.ElementTree as ET
+          import html2text
+
+          h = html2text.HTML2Text()
+          h.body_width = 0           # 줄바꿈 안 함
+          h.protect_links = True
+          h.wrap_links = False
 
           rss = ET.parse(sys.stdin)
           items = rss.findall('.//item')
+
+          # RSS에 있는 글 파일명 수집 (삭제 감지용)
+          current_files = set()
 
           for item in items:
               title = item.find('title').text or ''
@@ -45,12 +57,10 @@ jobs:
                   continue
 
               filepath = f'log/{safe}.md'
-              if os.path.exists(filepath):
-                  continue
+              current_files.add(f'{safe}.md')
 
-              # HTML 태그 제거, 엔티티 디코드
-              content = re.sub(r'<[^>]+>', '', desc)
-              content = html.unescape(content).strip()
+              # HTML → 마크다운 변환
+              content = h.handle(desc).strip()
 
               with open(filepath, 'w', encoding='utf-8') as f:
                   f.write(f'# {title}\n\n')
@@ -58,7 +68,14 @@ jobs:
                   f.write(f'> 작성일: {date}\n\n')
                   f.write(content + '\n')
 
-              print(f'Created: {filepath}')
+              print(f'Synced: {filepath}')
+
+          # 삭제된 글 감지: log/에 있지만 RSS에 없는 파일 제거
+          if os.path.isdir('log'):
+              for f in os.listdir('log'):
+                  if f.endswith('.md') and f not in current_files:
+                      os.remove(f'log/{f}')
+                      print(f'Deleted: log/{f}')
           "
 
       - name: Update README with links
@@ -91,6 +108,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet && echo "No new posts" && exit 0
-          git commit -m "blog: 새 글 동기화"
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "blog: 글 동기화"
           git push
