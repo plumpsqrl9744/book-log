@@ -23,7 +23,7 @@ jobs:
             exit 0
           fi
 
-          mkdir -p posts
+          mkdir -p log
 
           echo "$RSS" | python3 -c "
           import sys, os, re, html
@@ -44,7 +44,7 @@ jobs:
               if not safe:
                   continue
 
-              filepath = f'posts/{safe}.md'
+              filepath = f'log/{safe}.md'
               if os.path.exists(filepath):
                   continue
 
@@ -59,6 +59,31 @@ jobs:
                   f.write(content + '\n')
 
               print(f'Created: {filepath}')
+          "
+
+      - name: Update README with links
+        run: |
+          python3 -c "
+          import os, re
+
+          files = sorted(os.listdir('log')) if os.path.isdir('log') else []
+          md_files = [f for f in files if f.endswith('.md')]
+
+          links = []
+          for f in md_files:
+              name = f.replace('.md', '').replace('-', ' ')
+              links.append(f'- [{name}](log/{f})')
+
+          link_block = '\n'.join(links) if links else '_아직 글이 없습니다._'
+
+          with open('README.md', 'r', encoding='utf-8') as rf:
+              readme = rf.read()
+
+          pattern = r'(<!-- POST-LIST:START -->).*?(<!-- POST-LIST:END -->)'
+          updated = re.sub(pattern, rf'\1\n{link_block}\n\2', readme, flags=re.DOTALL)
+
+          with open('README.md', 'w', encoding='utf-8') as wf:
+              wf.write(updated)
           "
 
       - name: Commit and push
