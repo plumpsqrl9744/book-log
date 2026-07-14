@@ -9,45 +9,63 @@ permissions:
   contents: write
 
 jobs:
-  update-readme:
+  sync-posts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch RSS and update README
+      - name: Fetch RSS and create post files
         run: |
-          # 티스토리 RSS를 User-Agent 설정해서 가져오기
           RSS=$(curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://dev-jayden.tistory.com/rss")
 
-          # RSS에서 제목, 링크, 날짜 추출
-          POSTS=$(echo "$RSS" | python3 -c "
-          import sys, xml.etree.ElementTree as ET
+          if [ -z "$RSS" ]; then
+            echo "RSS fetch failed"
+            exit 0
+          fi
+
+          mkdir -p posts
+
+          echo "$RSS" | python3 -c "
+          import sys, os, re, html
+          import xml.etree.ElementTree as ET
+
           rss = ET.parse(sys.stdin)
-          items = rss.findall('.//item')[:10]
+          items = rss.findall('.//item')
+
           for item in items:
               title = item.find('title').text or ''
               link = item.find('link').text or ''
               date = (item.find('pubDate').text or '')[:16]
-              print(f'- [{title}]({link}) — {date}')
-          ")
+              desc = item.find('description').text or ''
 
-          if [ -z "$POSTS" ]; then
-            echo "No posts found, skipping"
-            exit 0
-          fi
+              # 파일명: 특수문자 제거, 공백→하이픈
+              safe = re.sub(r'[^\w\s가-힣-]', '', title).strip()
+              safe = re.sub(r'\s+', '-', safe)
+              if not safe:
+                  continue
 
-          # README 업데이트
-          awk -v posts="$POSTS" '
-            /<!-- BLOG-POST-LIST:START -->/{print; print posts; skip=1; next}
-            /<!-- BLOG-POST-LIST:END -->/{skip=0}
-            !skip
-          ' README.md > README.tmp && mv README.tmp README.md
+              filepath = f'posts/{safe}.md'
+              if os.path.exists(filepath):
+                  continue
+
+              # HTML 태그 제거, 엔티티 디코드
+              content = re.sub(r'<[^>]+>', '', desc)
+              content = html.unescape(content).strip()
+
+              with open(filepath, 'w', encoding='utf-8') as f:
+                  f.write(f'# {title}\n\n')
+                  f.write(f'> 원문: {link}\n')
+                  f.write(f'> 작성일: {date}\n\n')
+                  f.write(content + '\n')
+
+              print(f'Created: {filepath}')
+          "
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git diff --quiet README.md && echo "No changes" && exit 0
-          git add README.md
-          git commit -m "blog: 최신 글 동기화"
+          git add -A
+          git diff --cached --quiet && echo "No new posts" && exit 0
+          git commit -m "blog: 새 글 동기화"
           git push
