@@ -2,21 +2,49 @@ name: Blog Post Sync
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 1시간마다
-  workflow_dispatch:       # 수동 실행 가능
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   update-readme:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Pull blog posts
-        uses: gautamkrishnar/blog-post-workflow@v1
-        with:
-          feed_list: "https://dev-jayden.tistory.com/rss"
-          max_post_count: 10
-          template: "$newline- [$title]($url) — $date"
-          date_format: "yyyy-MM-dd"
-          commit_message: "blog: $commitMessage"
-          user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          accept_header: "application/rss+xml"
+
+      - name: Fetch RSS and update README
+        run: |
+          # 티스토리 RSS를 User-Agent 설정해서 가져오기
+          RSS=$(curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://dev-jayden.tistory.com/rss")
+
+          # RSS에서 제목, 링크, 날짜 추출
+          POSTS=$(echo "$RSS" | python3 -c "
+          import sys, xml.etree.ElementTree as ET
+          rss = ET.parse(sys.stdin)
+          items = rss.findall('.//item')[:10]
+          for item in items:
+              title = item.find('title').text or ''
+              link = item.find('link').text or ''
+              date = (item.find('pubDate').text or '')[:16]
+              print(f'- [{title}]({link}) — {date}')
+          ")
+
+          if [ -z "$POSTS" ]; then
+            echo "No posts found, skipping"
+            exit 0
+          fi
+
+          # README 업데이트
+          awk -v posts="$POSTS" '
+            /<!-- BLOG-POST-LIST:START -->/{print; print posts; skip=1; next}
+            /<!-- BLOG-POST-LIST:END -->/{skip=0}
+            !skip
+          ' README.md > README.tmp && mv README.tmp README.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet README.md && echo "No changes" && exit 0
+          git add README.md
+          git commit -m "blog: 최신 글 동기화"
+          git push
